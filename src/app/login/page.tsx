@@ -1,5 +1,6 @@
 import Image from "next/image";
 import { signInWithGoogle } from "./actions";
+import { GoogleButton } from "./google-button";
 
 export default async function LoginPage({
   searchParams,
@@ -8,23 +9,24 @@ export default async function LoginPage({
 }) {
   const { error } = await searchParams;
   return (
-    <main className="mx-auto flex min-h-dvh max-w-sm flex-col items-center justify-center gap-6 px-4 text-center">
-      <Image src="/icons/icon.svg" alt="KAMI" width={80} height={80} priority />
-      <h1 className="text-2xl font-bold">Sign in to KAMI</h1>
-      {error && (
-        <p role="alert" className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">
-          Sign-in did not work. Please try again.
-        </p>
-      )}
-      <form action={signInWithGoogle} className="w-full">
-        <button
-          type="submit"
-          className="h-12 w-full rounded-xl bg-[#0F2A44] px-4 text-base font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00A8FF]"
-        >
-          Continue with Google
-        </button>
-      </form>
-      <p className="text-sm text-[#4A5D70]">Facebook and Telegram come later.</p>
+    <main className="flex min-h-dvh flex-col bg-[#0F2A44]">
+      <div className="kami-enter flex flex-1 flex-col items-center justify-center gap-4 px-6 pb-8 pt-12 text-center">
+        <Image src="/icons/icon.svg" alt="KAMI logo" width={112} height={112} priority />
+        <div className="text-4xl font-bold tracking-[6px] text-white">KAMI</div>
+        <p className="max-w-[280px] text-base leading-6 text-[#C5D1DD]">Run your whole business from one app.</p>
+      </div>
+
+      <div className="kami-enter-delay mx-auto flex w-full max-w-md flex-col gap-3 rounded-t-[28px] bg-white px-6 pb-8 pt-7">
+        <h1 className="text-[22px] font-bold text-[#0B1F33]">Sign in or create an account</h1>
+        <p className="mb-2 text-sm leading-5 text-[#4A5D70]">Use the account you already have. No password to remember.</p>
+        {error && (
+          <p role="alert" className="kami-fade rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+            Sign-in did not work. Please try again.
+          </p>
+        )}
+        <GoogleButton action={signInWithGoogle} />
+        <p className="pt-1 text-center text-xs text-[#4A5D70]">Facebook and Telegram come later.</p>
+      </div>
     </main>
   );
 }

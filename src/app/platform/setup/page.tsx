@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { LiveStatus, ProgressBar, Spinner } from "@/components/ui";
 
 // First sign-in to the console: link an authenticator app, then confirm with a 6-digit code.
 export default function SetupTwoFactor() {
@@ -14,6 +15,8 @@ export default function SetupTwoFactor() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [shake, setShake] = useState(0);
   const started = useRef(false);
 
   useEffect(() => {
@@ -39,14 +42,19 @@ export default function SetupTwoFactor() {
     setBusy(true);
     setError(null);
     const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: code.trim() });
-    setBusy(false);
-    if (error) return setError("That code did not work. Check the code and try again.");
+    if (error) {
+      setBusy(false);
+      setCode("");
+      setShake((n) => n + 1);
+      return setError("That code did not work. Check the code and try again.");
+    }
+    setDone(true); // keep the screen busy until the console opens
     router.replace("/platform");
     router.refresh();
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-5 px-4 py-8">
+    <main className="kami-enter mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-5 px-4 py-8">
       <h1 className="text-2xl font-bold">Set up two-factor</h1>
       <p className="text-[#4A5D70]">The console needs a code from an authenticator app every time you sign in.</p>
       <ol className="list-decimal pl-5 text-sm leading-6 text-[#0F2A44]">
@@ -65,17 +73,19 @@ export default function SetupTwoFactor() {
           Key: <code className="select-all font-mono">{secret}</code>
         </p>
       )}
+      {(busy || done) && <ProgressBar />}
+      <LiveStatus>{done ? "Code accepted. Opening the console." : busy ? "Checking your code." : error ?? ""}</LiveStatus>
       <form onSubmit={confirm} className="flex flex-col gap-3">
         <label htmlFor="code" className="text-sm font-semibold">6-digit code</label>
         <input
           id="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6}
-          value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+          disabled={busy || done} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
           className="h-12 rounded-xl border border-[#B8C6D3] bg-white px-3 text-center text-xl tracking-widest"
         />
-        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-        <button type="submit" disabled={busy || code.length !== 6 || !factorId}
-          className="h-12 rounded-xl bg-[#0F2A44] text-base font-semibold text-white disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00A8FF]">
-          {busy ? "Checking…" : "Turn on two-factor"}
+        {error && <p key={shake} role="alert" className="kami-shake text-sm text-red-700">{error}</p>}
+        <button type="submit" disabled={busy || done || code.length !== 6 || !factorId}
+          className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#0F2A44] text-base font-semibold text-white disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00A8FF]">
+          {done ? (<><Spinner /> Opening the console…</>) : busy ? (<><Spinner /> Checking your code…</>) : "Turn on two-factor"}
         </button>
       </form>
     </main>
