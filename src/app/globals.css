@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+:root {
+  --kami-navy: #0f2a44;
+  --kami-light: #c5d1dd;
+  --kami-blue: #00a8ff;
+  --kami-green: #22c55e;
+}
+
+body {
+  background: #f5f7fa;
+  color: var(--kami-navy);
+  font-family: Inter, system-ui, sans-serif;
+}
