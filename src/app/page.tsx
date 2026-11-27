@@ -7,7 +7,7 @@ export default async function Home() {
   const name = (user?.user_metadata?.full_name as string | undefined) ?? user?.email ?? "there";
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-sm flex-col items-center justify-center gap-6 px-4 text-center">
+    <main className="kami-enter mx-auto flex min-h-dvh max-w-sm flex-col items-center justify-center gap-6 px-4 text-center">
       <Image src="/icons/icon.svg" alt="KAMI" width={96} height={96} priority />
       <h1 className="text-3xl font-bold">Welcome, {name}</h1>
       <p className="text-base text-[#4A5D70]">You are signed in to KAMI.</p>
