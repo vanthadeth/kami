@@ -22,10 +22,15 @@ insert into public.plans (key, name, trial_days, billing_interval, base_price, p
 insert into public.plans (key, name, status) values ('old_plan', 'Old plan', 'archived');
 select set_config('kami.audit_reason', '', true);
 
-create function pg_temp.login(p_user text, p_aal text default 'aal2') returns void language sql as $$
-  select set_config('request.jwt.claims', json_build_object('sub', p_user, 'aal', p_aal, 'role', 'authenticated')::text, true);
+-- p_mfa_age_min: minutes since the second factor was entered (null = never, as with aal1)
+create function pg_temp.login(p_user text, p_aal text default 'aal2', p_mfa_age_min int default 1) returns void language sql as $$
+  select set_config('request.jwt.claims', json_build_object(
+    'sub', p_user, 'aal', p_aal, 'role', 'authenticated',
+    'amr', case when p_aal = 'aal2' and p_mfa_age_min is not null
+                then json_build_array(json_build_object('method', 'totp',
+                       'timestamp', floor(extract(epoch from now())) - p_mfa_age_min * 60)) end)::text, true);
 $$;
-grant execute on function pg_temp.login(text, text) to authenticated;
+grant execute on function pg_temp.login(text, text, int) to authenticated;
 
 -- The seeded plan ------------------------------------------------------------
 select results_eq($$select name, is_public, trial_days, base_price from public.plans where key = 'free_90'$$,

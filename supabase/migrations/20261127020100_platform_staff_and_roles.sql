@@ -66,6 +66,24 @@ as $$
   select coalesce((select auth.jwt()) ->> 'aal', '') = 'aal2';
 $$;
 
+-- True when the second factor was entered within the last p_minutes (default 15).
+-- Used for risky changes: an aal2 token can be up to an hour old, so aal alone is not enough.
+-- Reads the time of the second-factor step from the token's amr claim.
+create or replace function private.has_recent_two_factor(p_minutes int default 15)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select private.has_two_factor()
+     and exists (
+       select 1
+       from jsonb_array_elements(coalesce((select auth.jwt()) -> 'amr', '[]'::jsonb)) as a(e)
+       where a.e ->> 'method' in ('totp', 'phone', 'webauthn')
+         and (a.e ->> 'timestamp')::numeric >= extract(epoch from now()) - p_minutes * 60
+     );
+$$;
+
 -- True for an active staff member who passed two-factor.
 create or replace function private.is_platform_staff()
 returns boolean
@@ -118,14 +136,32 @@ as $$
   );
 $$;
 
-revoke all on function private.has_two_factor(), private.is_platform_staff(),
+revoke all on function private.has_two_factor(), private.has_recent_two_factor(int), private.is_platform_staff(),
   private.has_platform_permission(text), private.is_platform_superadmin(),
   private.audit_reason(), private.set_updated_at(), private.audit_platform_change(),
   private.forbid_audit_log_change()
   from public;
-grant execute on function private.has_two_factor(), private.is_platform_staff(),
+grant execute on function private.has_two_factor(), private.has_recent_two_factor(int), private.is_platform_staff(),
   private.has_platform_permission(text), private.is_platform_superadmin()
   to authenticated, service_role;
+
+-- Risky changes (staff, roles, the grid, platform settings) need a second factor entered in
+-- the last 15 minutes. Direct SQL with no signed-in user (setup, migrations) is not checked.
+create or replace function private.require_recent_two_factor()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if (select auth.uid()) is not null and not private.has_recent_two_factor(15) then
+    raise exception 'Enter your two-factor code again to make this change'
+      using errcode = 'insufficient_privilege';
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+revoke all on function private.require_recent_two_factor() from public;
+grant execute on function private.require_recent_two_factor() to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- Guard triggers
@@ -189,6 +225,11 @@ as $$
 declare
   v_super_role uuid := (select id from public.platform_roles where is_superadmin);
 begin
+  if (select auth.uid()) is not null
+     and (select auth.uid()) = coalesce(new.user_id, old.user_id) then
+    raise exception 'You cannot change your own staff record or role' using errcode = 'insufficient_privilege';
+  end if;
+
   if tg_op in ('INSERT', 'UPDATE') and new.role_id = v_super_role
      and (tg_op = 'INSERT' or old.role_id <> v_super_role)
      and (select auth.uid()) is not null
@@ -221,6 +262,15 @@ create trigger platform_roles_updated_at before update on public.platform_roles
 create trigger platform_staff_updated_at before update on public.platform_staff
   for each row execute function private.set_updated_at();
 
+create trigger platform_roles_recent_2fa before insert or update or delete on public.platform_roles
+  for each row execute function private.require_recent_two_factor();
+create trigger platform_role_permissions_recent_2fa before insert or update or delete on public.platform_role_permissions
+  for each row execute function private.require_recent_two_factor();
+create trigger platform_staff_recent_2fa before insert or update or delete on public.platform_staff
+  for each row execute function private.require_recent_two_factor();
+create trigger platform_settings_recent_2fa before insert or update or delete on public.platform_settings
+  for each row execute function private.require_recent_two_factor();
+
 -- Every change is logged with its reason.
 create trigger platform_permissions_audit after insert or update or delete on public.platform_permissions
   for each row execute function private.audit_platform_change();
@@ -232,7 +282,9 @@ create trigger platform_staff_audit after insert or update or delete on public.p
   for each row execute function private.audit_platform_change();
 
 -- ---------------------------------------------------------------------------
--- Seed: the permission grid and the built-in roles (from the console prototype)
+-- Seed: the permission grid and the built-in roles (from the console prototype).
+-- Changed from the prototype after the security review: staff.mfa (reset someone's
+-- two-factor) is superadmin only, so Support no longer has it.
 -- ---------------------------------------------------------------------------
 
 select set_config('kami.audit_reason', 'Initial platform setup', true);
@@ -265,7 +317,7 @@ select r.id, p.key
 from (values
   ('accountant', 'biz.view'), ('accountant', 'trial.extend'), ('accountant', 'plan.change'),
   ('accountant', 'plans.manage'), ('accountant', 'billing.export'), ('accountant', 'log.view'),
-  ('support',    'biz.view'), ('support', 'log.view'), ('support', 'support.remote'), ('support', 'staff.mfa'),
+  ('support',    'biz.view'), ('support', 'log.view'), ('support', 'support.remote'),
   ('onboarding', 'biz.view'), ('onboarding', 'biz.create'), ('onboarding', 'trial.extend'),
   ('operations', 'biz.view'), ('operations', 'log.view'), ('operations', 'settings.manage'),
   ('developer',  'biz.view'), ('developer', 'log.view'), ('developer', 'settings.manage'),

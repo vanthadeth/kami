@@ -1,6 +1,6 @@
 -- The platform log is append-only and readable only with log.view; settings need settings.manage.
 begin;
-select plan(13);
+select plan(14);
 
 -- 1 auditor (log.view), 2 onboarding (no log.view), 3 operations (settings.manage), 4 plain user
 insert into auth.users (id) values
@@ -18,10 +18,15 @@ from (values
 ) as t(u, r);
 select set_config('kami.audit_reason', '', true);
 
-create function pg_temp.login(p_user text, p_aal text default 'aal2') returns void language sql as $$
-  select set_config('request.jwt.claims', json_build_object('sub', p_user, 'aal', p_aal, 'role', 'authenticated')::text, true);
+-- p_mfa_age_min: minutes since the second factor was entered (null = never, as with aal1)
+create function pg_temp.login(p_user text, p_aal text default 'aal2', p_mfa_age_min int default 1) returns void language sql as $$
+  select set_config('request.jwt.claims', json_build_object(
+    'sub', p_user, 'aal', p_aal, 'role', 'authenticated',
+    'amr', case when p_aal = 'aal2' and p_mfa_age_min is not null
+                then json_build_array(json_build_object('method', 'totp',
+                       'timestamp', floor(extract(epoch from now())) - p_mfa_age_min * 60)) end)::text, true);
 $$;
-grant execute on function pg_temp.login(text, text) to authenticated;
+grant execute on function pg_temp.login(text, text, int) to authenticated;
 
 -- Append-only, even for the database owner -------------------------------------
 select ok((select count(*) from public.platform_audit_log) > 0, 'setup changes were logged');
@@ -64,6 +69,13 @@ update public.platform_settings set value = 'true' where key = 'enforce_trial_en
 reset role;
 select is((select value from public.platform_settings where key = 'enforce_trial_end'), 'false'::jsonb,
   'an auditor cannot change settings');
+
+select pg_temp.login('00000000-0000-0000-0000-000000000003', 'aal2', 20);  -- operations, old 2FA code
+set local role authenticated;
+select set_config('kami.audit_reason', 'Paid plans are live', true);
+select throws_like($$update public.platform_settings set value = 'true' where key = 'enforce_trial_end'$$,
+  '%two-factor code again%', 'changing a setting needs a two-factor code from the last 15 minutes');
+reset role;
 
 select pg_temp.login('00000000-0000-0000-0000-000000000003');  -- operations: settings.manage
 set local role authenticated;

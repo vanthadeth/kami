@@ -1,6 +1,6 @@
 -- Platform staff, roles, two-factor and the permission grid.
 begin;
-select plan(22);
+select plan(25);
 
 -- People: 1 superadmin, 2 accountant, 3 auditor, 4 plain user (not staff), 5 staff admin (custom role), 6 disabled staff
 insert into auth.users (id) values
@@ -23,16 +23,26 @@ from (values
 ) as t(u, r, s);
 select set_config('kami.audit_reason', '', true);
 
-create function pg_temp.login(p_user text, p_aal text default 'aal2') returns void language sql as $$
-  select set_config('request.jwt.claims', json_build_object('sub', p_user, 'aal', p_aal, 'role', 'authenticated')::text, true);
+-- p_mfa_age_min: minutes since the second factor was entered (null = never, as with aal1)
+create function pg_temp.login(p_user text, p_aal text default 'aal2', p_mfa_age_min int default 1) returns void language sql as $$
+  select set_config('request.jwt.claims', json_build_object(
+    'sub', p_user, 'aal', p_aal, 'role', 'authenticated',
+    'amr', case when p_aal = 'aal2' and p_mfa_age_min is not null
+                then json_build_array(json_build_object('method', 'totp',
+                       'timestamp', floor(extract(epoch from now())) - p_mfa_age_min * 60)) end)::text, true);
 $$;
-grant execute on function pg_temp.login(text, text) to authenticated;
+grant execute on function pg_temp.login(text, text, int) to authenticated;
 
 -- Seed ----------------------------------------------------------------------
 select is((select count(*)::int from public.platform_permissions), 12, 'the grid has 12 permissions');
 select set_eq($$select key from public.platform_roles where is_system$$,
   array['superadmin','accountant','support','onboarding','operations','developer','auditor'],
   'the 7 built-in roles are seeded');
+
+select is_empty($$select 1 from public.platform_role_permissions rp
+    join public.platform_roles r on r.id = rp.role_id
+    where rp.permission_key = 'staff.mfa'$$,
+  'only superadmin can reset two-factor: no other role has staff.mfa');
 
 -- Anonymous visitors -----------------------------------------------------------
 set local role anon;
@@ -72,9 +82,17 @@ select throws_like($$insert into public.platform_role_permissions (role_id, perm
   '%every permission%', 'the superadmin grid column cannot be edited');
 select throws_like($$delete from public.platform_roles where key = 'auditor'$$,
   '%cannot be deleted%', 'built-in roles cannot be deleted');
-select throws_like($$update public.platform_staff set status = 'disabled'
+select throws_like($$update public.platform_staff set role_id = (select id from public.platform_roles where key = 'auditor')
     where user_id = '00000000-0000-0000-0000-000000000001'$$,
-  '%at least one active superadmin%', 'the last active superadmin cannot be disabled');
+  '%your own staff record%', 'nobody can change their own role, not even a superadmin');
+reset role;
+
+-- Risky changes need a fresh two-factor code (within 15 minutes)
+select pg_temp.login('00000000-0000-0000-0000-000000000001', 'aal2', 30);
+set local role authenticated;
+select set_config('kami.audit_reason', 'Rename again', true);
+select throws_like($$update public.platform_roles set name = 'Billing team' where key = 'accountant'$$,
+  '%two-factor code again%', 'a two-factor code older than 15 minutes cannot change roles');
 reset role;
 
 -- Permission by role ----------------------------------------------------------
@@ -94,6 +112,9 @@ select throws_like($$insert into public.platform_staff (user_id, role_id, status
 select lives_ok($$insert into public.platform_staff (user_id, role_id, status)
     select '00000000-0000-0000-0000-000000000004', id, 'invited' from public.platform_roles where key = 'auditor'$$,
   'staff.manage can add an auditor');
+select throws_like($$update public.platform_staff set status = 'disabled'
+    where user_id = '00000000-0000-0000-0000-000000000001'$$,
+  '%at least one active superadmin%', 'the last active superadmin cannot be disabled');
 reset role;
 
 -- Disabled staff --------------------------------------------------------------
