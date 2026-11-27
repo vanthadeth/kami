@@ -1,0 +1,27 @@
+name: Database tests
+
+on:
+  pull_request:
+    paths: ["supabase/**", ".github/workflows/database-tests.yml"]
+  push:
+    branches: [main]
+    paths: ["supabase/**"]
+
+jobs:
+  pgtap:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pgTAP
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-16-pgtap libtap-parser-sourcehandler-pgtap-perl
+      - name: Start Postgres
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres createuser --superuser "$USER"
+      - name: Run migrations and tests
+        env:
+          PGHOST: /var/run/postgresql
+          PGDATABASE: postgres
+        run: bash supabase/tests/local/run.sh
